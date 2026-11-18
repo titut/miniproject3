@@ -1,0 +1,7 @@
+../Core/Src/freertos.c:78:6:AppRtosInit	32	static,ignoring_inline_asm
+../Core/Src/freertos.c:97:13:LedTask	24	static
+../Core/Src/freertos.c:110:13:ButtonTask	24	static
+../Core/Src/freertos.c:127:13:LongUartTask	24	static
+../Core/Src/freertos.c:148:13:EmergencyTask	16	static
+../Core/Src/freertos.c:160:13:EmergencyTimerCb	16	static
+../Core/Src/freertos.c:166:6:HAL_GPIO_EXTI_Callback	24	static,ignoring_inline_asm

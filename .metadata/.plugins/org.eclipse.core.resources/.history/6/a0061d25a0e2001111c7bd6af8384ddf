@@ -1,0 +1,96 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * File Name          : freertos.c
+  * Description        : Code for freertos applications
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+
+/* Includes ------------------------------------------------------------------*/
+#include "FreeRTOS.h"
+#include "task.h"
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "semphr.h"
+#include "timers.h"
+#include "usart.h"
+#include "gpio.h"
+#include <string.h>
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+#define CHUNK_SIZE   100
+#define NUM_CHUNKS   230          /* 230 * ~8.7 ms ≈ 2 s at 115200 */
+
+static QueueHandle_t     modeQueue;
+static SemaphoreHandle_t uartMutex;
+static SemaphoreHandle_t emergencySem;
+static TaskHandle_t      buttonTaskHandle;
+static TimerHandle_t     emergencyTimer;
+
+static const uint32_t halfPeriodMs[3] = {500, 250, 125};   /* 1, 2, 4 Hz */
+
+static void LedTask(void *arg);
+static void ButtonTask(void *arg);
+static void LongUartTask(void *arg);
+static void EmergencyTask(void *arg);
+static void EmergencyTimerCb(TimerHandle_t t);
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+/* USER CODE BEGIN Variables */
+
+/* USER CODE END Variables */
+
+/* Private function prototypes -----------------------------------------------*/
+/* USER CODE BEGIN FunctionPrototypes */
+
+/* USER CODE END FunctionPrototypes */
+
+/* Private application code --------------------------------------------------*/
+/* USER CODE BEGIN Application */
+uint8_t initialMode = 0;
+
+modeQueue    = xQueueCreate(1, sizeof(uint8_t));
+uartMutex    = xSemaphoreCreateMutex();      /* has priority inheritance */
+emergencySem = xSemaphoreCreateBinary();
+configASSERT(modeQueue && uartMutex && emergencySem);
+
+xQueueSend(modeQueue, &initialMode, 0);      /* start at 1 Hz */
+
+xTaskCreate(EmergencyTask, "Emergency", 256, NULL, 4, NULL);
+xTaskCreate(LedTask,       "LED",       256, NULL, 3, NULL);
+xTaskCreate(ButtonTask,    "Button",    256, NULL, 2, &buttonTaskHandle);
+xTaskCreate(LongUartTask,  "LongUART",  256, NULL, 1, NULL);
+
+emergencyTimer = xTimerCreate("EmgTmr", pdMS_TO_TICKS(7000), pdTRUE, NULL, EmergencyTimerCb);
+xTimerStart(emergencyTimer, 0);
+/* USER CODE END Application */
+

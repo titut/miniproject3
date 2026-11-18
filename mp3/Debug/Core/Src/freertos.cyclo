@@ -1,0 +1,7 @@
+../Core/Src/freertos.c:78:6:AppRtosInit	5
+../Core/Src/freertos.c:97:13:LedTask	1
+../Core/Src/freertos.c:110:13:ButtonTask	2
+../Core/Src/freertos.c:127:13:LongUartTask	2
+../Core/Src/freertos.c:148:13:EmergencyTask	1
+../Core/Src/freertos.c:160:13:EmergencyTimerCb	1
+../Core/Src/freertos.c:166:6:HAL_GPIO_EXTI_Callback	3

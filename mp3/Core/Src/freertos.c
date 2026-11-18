@@ -1,0 +1,176 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * File Name          : freertos.c
+  * Description        : Code for freertos applications
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+
+/* Includes ------------------------------------------------------------------*/
+#include "FreeRTOS.h"
+#include "task.h"
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include "queue.h"
+#include "semphr.h"
+#include "timers.h"
+#include <string.h>
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+#define CHUNK_SIZE   100
+#define NUM_CHUNKS   230
+
+static QueueHandle_t     modeQueue;
+static SemaphoreHandle_t uartMutex;
+static SemaphoreHandle_t emergencySem;
+static TaskHandle_t      buttonTaskHandle;
+static TimerHandle_t     emergencyTimer;
+
+extern UART_HandleTypeDef huart2;
+
+static const uint32_t halfPeriodMs[3] = {500, 250, 125};   /* 1, 2, 4 Hz */
+
+static void LedTask(void *arg);
+static void ButtonTask(void *arg);
+static void LongUartTask(void *arg);
+static void EmergencyTask(void *arg);
+static void EmergencyTimerCb(TimerHandle_t t);
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+/* USER CODE BEGIN Variables */
+
+/* USER CODE END Variables */
+
+/* Private function prototypes -----------------------------------------------*/
+/* USER CODE BEGIN FunctionPrototypes */
+
+/* USER CODE END FunctionPrototypes */
+
+/* Private application code --------------------------------------------------*/
+/* USER CODE BEGIN Application */
+void AppRtosInit(void)
+{
+  uint8_t initialMode = 0;
+  modeQueue    = xQueueCreate(1, sizeof(uint8_t));
+  uartMutex    = xSemaphoreCreateMutex();
+  emergencySem = xSemaphoreCreateBinary();
+  configASSERT(modeQueue && uartMutex && emergencySem);
+  xQueueSend(modeQueue, &initialMode, 0);
+
+  xTaskCreate(EmergencyTask, "Emergency", 256, NULL, 4, NULL);
+  xTaskCreate(LedTask,       "LED",       256, NULL, 3, NULL);
+  xTaskCreate(ButtonTask,    "Button",    256, NULL, 2, &buttonTaskHandle);
+  xTaskCreate(LongUartTask,  "LongUART",  256, NULL, 1, NULL);
+
+  emergencyTimer = xTimerCreate("EmgTmr", pdMS_TO_TICKS(7000), pdTRUE, NULL, EmergencyTimerCb);
+  xTimerStart(emergencyTimer, 0);
+}
+
+/* Blink LED based on current mode */
+static void LedTask(void *arg)
+{
+  uint8_t mode = 0;
+  TickType_t last = xTaskGetTickCount();
+  for (;;)
+  {
+    xQueuePeek(modeQueue, &mode, 0);               /* read without consuming */
+    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(halfPeriodMs[mode]));
+  }
+}
+
+/* change mode on button press (not immediate) */
+static void ButtonTask(void *arg)
+{
+  uint8_t mode = 0;
+  for (;;)
+  {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);       /* sleep until ISR */
+    vTaskDelay(pdMS_TO_TICKS(50));                 /* debounce */
+    if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET)
+    {
+      mode = (mode + 1) % 3;
+      xQueueOverwrite(modeQueue, &mode);
+    }
+    ulTaskNotifyTake(pdTRUE, 0);                   /* discard bounce notifications */
+  }
+}
+
+/* Send dummy UART signal and then delay 5s */
+static void LongUartTask(void *arg)
+{
+  static uint8_t chunk[CHUNK_SIZE];
+  memset(chunk, 'L', CHUNK_SIZE - 2);
+  chunk[CHUNK_SIZE - 2] = '\r';
+  chunk[CHUNK_SIZE - 1] = '\n';
+
+  TickType_t last = xTaskGetTickCount();
+  for (;;)
+  {
+    for (int i = 0; i < NUM_CHUNKS; i++)
+    {
+      xSemaphoreTake(uartMutex, portMAX_DELAY);
+      HAL_UART_Transmit(&huart2, chunk, CHUNK_SIZE, 100);
+      xSemaphoreGive(uartMutex);
+    }
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(5000));
+  }
+}
+
+/* send emergency message, highest priority */
+static void EmergencyTask(void *arg)
+{
+  static const char msg[] = "\r\n!!! EMERGENCY !!!\r\n";
+  for (;;)
+  {
+    xSemaphoreTake(emergencySem, portMAX_DELAY);
+    xSemaphoreTake(uartMutex, portMAX_DELAY);
+    HAL_UART_Transmit(&huart2, (uint8_t *)msg, sizeof(msg) - 1, 100);
+    xSemaphoreGive(uartMutex);
+  }
+}
+
+/* Timer to start emergency task */
+static void EmergencyTimerCb(TimerHandle_t t)
+{
+  xSemaphoreGive(emergencySem);
+}
+
+/* Signal the task and get out, yield if something is more important */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  BaseType_t woken = pdFALSE;
+  if (GPIO_Pin == GPIO_PIN_13)
+  {
+    vTaskNotifyGiveFromISR(buttonTaskHandle, &woken);
+  }
+  portYIELD_FROM_ISR(woken);
+}
+/* USER CODE END Application */
+
